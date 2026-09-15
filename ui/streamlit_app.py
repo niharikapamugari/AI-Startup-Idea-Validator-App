@@ -38,6 +38,9 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
+import streamlit.components.v1 as components
+st.set_page_config(page_title="AI Startup Idea Validator", page_icon="\U0001F680", layout="wide")
+
 
 from app.orchestrator import run_pipeline, PipelineCancelled
 from tools.input_validator import validate_idea_text, check_sensitive_content, check_plausibility
@@ -51,7 +54,6 @@ from db import database
 from tools import offline_cache
 from style_block import CUSTOM_CSS
 
-st.set_page_config(page_title="AI Startup Idea Validator", page_icon="\U0001F680", layout="wide")
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 MAX_PIPELINE_SECONDS = 120  # safety net auto-cancel, on top of the manual Stop button
@@ -75,18 +77,33 @@ if "user" not in st.session_state:
 # the PARENT page's DOM from this embedded iframe, since st.iframe
 # content lives in its own iframe document.
 # ---------------------------------------------------------------------------
-st.iframe(
+# ---------------------------------------------------------------------------
+# Ctrl+Enter submits the idea.
+# ---------------------------------------------------------------------------
+components.html(
     """
     <script>
     (function() {
         const doc = window.parent.document;
-        if (doc._ctrlEnterBound) { return; }
+
+        if (doc._ctrlEnterBound) {
+            return;
+        }
+
         doc._ctrlEnterBound = true;
-        doc.addEventListener('keydown', function(e) {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                const buttons = doc.querySelectorAll('button');
+
+        doc.addEventListener("keydown", function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                e.preventDefault();
+
+                const buttons = doc.querySelectorAll("button");
+
                 for (const btn of buttons) {
-                    if (btn.innerText && btn.innerText.trim() === 'Validate Idea' && !btn.disabled) {
+                    if (
+                        btn.innerText &&
+                        btn.innerText.trim() === "Validate Idea" &&
+                        !btn.disabled
+                    ) {
                         btn.click();
                         break;
                     }

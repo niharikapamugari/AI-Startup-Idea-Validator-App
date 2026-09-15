@@ -158,7 +158,7 @@ the key questions asked and the key advice/answers given. Keep only
 substantive points - specific numbers, decisions, or advice - not
 pleasantries. Under 150 words. Plain text, no markdown headers.
 
-{"Existing summary of even earlier turns:\n" + existing_summary if existing_summary else ""}
+{existing_summary_text}
 
 Conversation to fold in:
 {transcript}

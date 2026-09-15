@@ -22,28 +22,42 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Bridge Streamlit secrets -> environment variables, when available.
-# Wrapped defensively: st.secrets raises if there's no secrets.toml
-# AND no cloud secrets configured (e.g. running via `python
-# pipeline.py` locally, with no Streamlit context at all) - that's a
-# normal, expected case here, not an error worth surfacing.
-try:
-    import streamlit as st
-    for _key in (
-        "GROQ_API_KEY", "TAVILY_API_KEY", "DATABASE_URL",
-        "PG_HOST", "PG_PORT", "PG_DB", "PG_USER", "PG_PASSWORD",
-    ):
-        if _key in st.secrets and not os.getenv(_key):
-            os.environ[_key] = str(st.secrets[_key])
-except Exception:
-    pass
+# Bridge Streamlit secrets -> environment variables only when
+# a secrets.toml file exists.
+
+from pathlib import Path
+
+_SECRET_PATHS = [
+    Path.home() / ".streamlit" / "secrets.toml",
+    Path(__file__).resolve().parents[1] / ".streamlit" / "secrets.toml",
+]
+
+_HAS_SECRETS_FILE = any(path.is_file() for path in _SECRET_PATHS)
+
+if _HAS_SECRETS_FILE:
+    try:
+        import streamlit as st
+
+        for _key in (
+            "GROQ_API_KEY",
+            "TAVILY_API_KEY",
+            "DATABASE_URL",
+            "PG_HOST",
+            "PG_PORT",
+            "PG_DB",
+            "PG_USER",
+            "PG_PASSWORD",
+        ):
+            if _key in st.secrets and not os.getenv(_key):
+                os.environ[_key] = str(st.secrets[_key])
+
+    except Exception:
+        pass
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "openai/gpt-oss-120b"
 
 # --- PostgreSQL (Idea History persistence) ---
-# Either set a single DATABASE_URL (e.g. postgresql://user:pass@host:5432/dbname)
-# or the individual PG* variables below - DATABASE_URL wins if both are set.
 DATABASE_URL = os.getenv("DATABASE_URL")
 PG_HOST = os.getenv("PG_HOST", "localhost")
 PG_PORT = os.getenv("PG_PORT", "5432")
