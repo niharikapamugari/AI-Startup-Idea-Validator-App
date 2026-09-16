@@ -22,37 +22,28 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Bridge Streamlit secrets -> environment variables only when
-# a secrets.toml file exists.
+# Bridge Streamlit secrets -> environment variables. Do not gate this on a
+# local secrets.toml path: Streamlit Community Cloud supplies secrets through
+# its runtime and the path is not a reliable deployment contract.
+try:
+    import streamlit as st
 
-from pathlib import Path
-
-_SECRET_PATHS = [
-    Path.home() / ".streamlit" / "secrets.toml",
-    Path(__file__).resolve().parents[1] / ".streamlit" / "secrets.toml",
-]
-
-_HAS_SECRETS_FILE = any(path.is_file() for path in _SECRET_PATHS)
-
-if _HAS_SECRETS_FILE:
-    try:
-        import streamlit as st
-
-        for _key in (
-            "GROQ_API_KEY",
-            "TAVILY_API_KEY",
-            "DATABASE_URL",
-            "PG_HOST",
-            "PG_PORT",
-            "PG_DB",
-            "PG_USER",
-            "PG_PASSWORD",
-        ):
-            if _key in st.secrets and not os.getenv(_key):
-                os.environ[_key] = str(st.secrets[_key])
-
-    except Exception:
-        pass
+    for _key in (
+        "GROQ_API_KEY",
+        "TAVILY_API_KEY",
+        "DATABASE_URL",
+        "PG_HOST",
+        "PG_PORT",
+        "PG_DB",
+        "PG_USER",
+        "PG_PASSWORD",
+    ):
+        if _key in st.secrets and not os.getenv(_key):
+            os.environ[_key] = str(st.secrets[_key])
+except Exception:
+    # Local CLI usage may not have a secrets file. Environment variables and
+    # python-dotenv remain valid sources in that case.
+    pass
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "openai/gpt-oss-120b"
