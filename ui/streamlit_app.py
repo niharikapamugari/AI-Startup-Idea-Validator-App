@@ -56,8 +56,6 @@ from style_block import CUSTOM_CSS
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-MAX_PIPELINE_SECONDS = 120  # safety net auto-cancel, on top of the manual Stop button
-
 if "db_ready" not in st.session_state:
     st.session_state.db_ready = database.init_db()
 
@@ -219,6 +217,7 @@ with st.sidebar:
         if st.button("Log Out"):
             st.session_state["user"] = None
             st.session_state.pop("sidebar_history_cache", None)
+            st.session_state.pop("sidebar_history_user_id", None)
             st.session_state.pop("result", None)
             st.session_state.pop("current_validation_id", None)
             st.rerun()
@@ -226,12 +225,17 @@ with st.sidebar:
         st.divider()
         st.subheader("Your History")
         user_id = st.session_state["user"]["id"]
-        fresh = database.list_validations(user_id)
-        if fresh:
+        cache_is_current = st.session_state.get("sidebar_history_user_id") == user_id
+        refresh_history = st.session_state.pop("refresh_sidebar_history", False)
+        if not cache_is_current or refresh_history:
+            fresh = database.list_validations(user_id)
             st.session_state["sidebar_history_cache"] = fresh
-            offline_cache.save_history_cache(user_id, fresh)
-            past = fresh
-        else:
+            st.session_state["sidebar_history_user_id"] = user_id
+            if fresh:
+                offline_cache.save_history_cache(user_id, fresh)
+
+        past = st.session_state.get("sidebar_history_cache", [])
+        if not past:
             # Postgres didn't return anything - fall back first to
             # this session's in-memory copy (fastest), then to the
             # on-disk cache (fixes: "if the user is offline, history
@@ -287,13 +291,12 @@ with col_a:
         "Describe your startup idea (2-3 lines):",
         height=100,
         help="Write a real, coherent business idea, in any language - results are always shown in English. Tip: Ctrl+Enter submits.",
-        disabled=pipeline_running,
     )
-    budget = st.selectbox("Expected Budget", BUDGET_RANGES, disabled=pipeline_running)
+    budget = st.selectbox("Expected Budget", BUDGET_RANGES)
 
 with col_b:
     st.write("**Location**")
-    use_gps = st.checkbox("Use my current location (GPS)", disabled=pipeline_running)
+    use_gps = st.checkbox("Use my current location (GPS)")
 
     if use_gps:
         gps = get_gps_location()
@@ -306,26 +309,28 @@ with col_b:
             target_market = ""
             country = state_input = city_input = ""
     else:
-        country = st.selectbox("Country (required)", ALL_COUNTRIES, disabled=pipeline_running)
+        country = st.selectbox("Country (required)", ALL_COUNTRIES)
 
         if country in COUNTRY_STATES:
-            state_input = st.selectbox("State", COUNTRY_STATES[country], disabled=pipeline_running)
+            state_input = st.selectbox("State", COUNTRY_STATES[country])
             state_input = "" if state_input in ("All States",) else state_input
         else:
-            state_input = st.text_input("State (optional)", help="Full dropdown not available for this country yet - enter manually.", disabled=pipeline_running)
+            state_input = st.text_input("State (optional)", help="Full dropdown not available for this country yet - enter manually.")
 
         if state_input and state_input in STATE_CITIES:
-            city_input = st.selectbox("City / Town", STATE_CITIES[state_input], disabled=pipeline_running)
+            city_input = st.selectbox("City / Town", STATE_CITIES[state_input])
             city_input = "" if city_input in ("All Cities/Towns",) else city_input
         else:
-            city_input = st.text_input("City / Town (optional)", disabled=pipeline_running)
+            city_input = st.text_input("City / Town (optional)")
 
         location_parts = [p for p in [city_input.strip() if city_input else "", state_input.strip() if state_input else "", country if country != "All Countries" else ""] if p]
         target_market = ", ".join(location_parts)
 
-    timeline = st.selectbox("Launch Timeline", TIMELINES, disabled=pipeline_running)
+    timeline = st.selectbox("Launch Timeline", TIMELINES)
 
 validate_clicked = st.button("Validate Idea", type="primary", disabled=pipeline_running)
+if pipeline_running:
+    st.caption("Validation is running. You can refine these inputs for your next run.")
 
 
 def _run_pipeline_job(idea_text_en, target_market, cancel_event):
@@ -394,15 +399,23 @@ if validate_clicked and not pipeline_running:
         st.session_state["pipeline_cancel_event"] = cancel_event
         st.session_state["pipeline_start_time"] = time.time()
         st.session_state["pipeline_idea_text_en"] = idea_text_en
+        st.session_state["pipeline_meta"] = {
+            "budget": budget,
+            "timeline": timeline,
+            "submitted_at": datetime.now(),
+        }
         st.session_state.pop("result", None)
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# Live polling: shows the mascot + elapsed time, and a Stop button that
-# sets the cancel_event (fixes: "if the user wants to stop the
-# validating process to modify, it must work").
+# Live polling is isolated in a fragment so the full page does not rerun
+# every second while the background job is still working.
 # ---------------------------------------------------------------------------
-if "pipeline_future" in st.session_state:
+@st.fragment(run_every=1)
+def render_pipeline_status():
+    if "pipeline_future" not in st.session_state:
+        return
+
     future = st.session_state["pipeline_future"]
     elapsed = time.time() - st.session_state["pipeline_start_time"]
 
@@ -427,15 +440,12 @@ if "pipeline_future" in st.session_state:
             del st.session_state["pipeline_future"]
             del st.session_state["pipeline_cancel_event"]
             del st.session_state["pipeline_start_time"]
+            st.session_state.pop("pipeline_meta", None)
             st.session_state["result"] = {
                 "invalid": True, "cancelled": True,
                 "reason": "Validation stopped. You can modify your idea above and validate again.",
             }
             st.rerun()
-        if elapsed > MAX_PIPELINE_SECONDS:
-            st.session_state["pipeline_cancel_event"].set()
-        time.sleep(1)
-        st.rerun()
     else:
         job_output = future.result()
         del st.session_state["pipeline_future"]
@@ -452,15 +462,24 @@ if "pipeline_future" in st.session_state:
         else:
             result = job_output["result"]
             result["idea_text"] = st.session_state.get("pipeline_idea_text_en", result.get("idea_text", ""))
-            meta = {"budget": budget, "timeline": timeline, "submitted_at": datetime.now()}
+            meta = st.session_state.pop("pipeline_meta", None) or {
+                "budget": budget,
+                "timeline": timeline,
+                "submitted_at": datetime.now(),
+            }
             result["_meta"] = {**meta, "submitted_at": meta["submitted_at"].strftime("%Y-%m-%d %H:%M")}
 
             user_id = st.session_state["user"]["id"] if st.session_state.get("user") else None
             new_id = database.save_validation(result, meta, user_id=user_id)
             st.session_state["current_validation_id"] = new_id
+            st.session_state["refresh_sidebar_history"] = True
             from agents.conversational_advisor import reset_advisor_memory
             reset_advisor_memory()
             st.session_state["result"] = result
+        st.rerun()
+
+
+render_pipeline_status()
 
 if "result" in st.session_state and "pipeline_future" not in st.session_state:
     result = st.session_state["result"]

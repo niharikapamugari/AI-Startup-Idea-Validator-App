@@ -96,16 +96,21 @@ def run_pipeline(idea_text: str, target_market: str = "", cancel_event=None, pro
     state.log_step("competitor_analysis", True, "")
     _tick("Market & Competitor Analysis")
 
-    state.swot = analyze_swot(state.extracted, state.market_analysis, state.competitors)
+    # SWOT needs the competitor result, while GTM only needs the market
+    # analysis. Run them together once their shared prerequisites exist.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        swot_future = executor.submit(analyze_swot, state.extracted, state.market_analysis, state.competitors)
+        gtm_future = executor.submit(generate_gtm_strategy, state.extracted, state.market_analysis)
+        state.swot = swot_future.result()
+        state.gtm = gtm_future.result()
     state.log_step("swot_risk", True, "")
+    state.log_step("gtm_strategy", True, "")
     _tick("SWOT & Risk Analysis")
 
     state.mvp = recommend_mvp(state.extracted, state.swot)
     state.log_step("mvp_recommendation", True, "")
     _tick("MVP Recommendation")
 
-    state.gtm = generate_gtm_strategy(state.extracted, state.market_analysis)
-    state.log_step("gtm_strategy", True, "")
     _tick("Go-To-Market Strategy")
 
     state.viability = calculate_viability_score(
@@ -117,29 +122,40 @@ def run_pipeline(idea_text: str, target_market: str = "", cancel_event=None, pro
     state.log_step("viability_score", True, "")
     _tick("Viability Scoring")
 
-    state.blind_spots = find_blind_spots(state.extracted)["blind_spots"]
-    state.honest_summary = generate_honest_summary(
-        state.extracted, state.search_results, state.viability
-    )["honest_summary"]
-    state.elevator_pitch = generate_elevator_pitch(state.extracted)
-    state.funding_suggestions = suggest_funding_paths(
-        state.extracted, state.viability
-    )["funding_suggestions"]
+    # These mentor outputs share inputs but do not depend on one another.
+    # Parallel calls remove several sequential network round trips.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        blind_spots_future = executor.submit(find_blind_spots, state.extracted)
+        honest_summary_future = executor.submit(
+            generate_honest_summary, state.extracted, state.search_results, state.viability
+        )
+        elevator_pitch_future = executor.submit(generate_elevator_pitch, state.extracted)
+        funding_future = executor.submit(suggest_funding_paths, state.extracted, state.viability)
+        state.blind_spots = blind_spots_future.result()["blind_spots"]
+        state.honest_summary = honest_summary_future.result()["honest_summary"]
+        state.elevator_pitch = elevator_pitch_future.result()
+        state.funding_suggestions = funding_future.result()["funding_suggestions"]
     state.log_step("insight_layer", True, "")
     _tick("Mentor Insights")
 
-    state.improvement_suggestions = generate_improvement_suggestions(state.to_dict())
+    # The suggestions, markdown report, and quick summary all consume the
+    # completed state but not each other's outputs.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        suggestions_future = executor.submit(generate_improvement_suggestions, state.to_dict())
+        report_future = executor.submit(generate_report, state.to_dict())
+        summary_future = executor.submit(generate_quick_summary, state.to_dict())
+        state.improvement_suggestions = suggestions_future.result()
+        state.report = report_future.result()
+        state.quick_summary = summary_future.result()
     state.log_step("improvement_suggestions", True, "")
     _tick("Improvement Suggestions")
 
-    state.report = generate_report(state.to_dict())
     state.log_step("report_generation", True, "")
     _tick("Report Generation")
 
     # Quick Summary (fixes P2) - one short paragraph condensing
     # everything, so the user doesn't have to read every agent's
     # full output to get the gist.
-    state.quick_summary = generate_quick_summary(state.to_dict())
     state.log_step("quick_summary", True, "")
     _tick("Quick Summary")
 

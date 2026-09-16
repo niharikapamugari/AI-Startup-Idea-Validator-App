@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- Older versions of the app used a required `username` column.  Keep it
+-- available (and make it nullable) so databases created by those versions
+-- can accept the current email-based account model.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+UPDATE users SET username = email WHERE username IS NULL;
+ALTER TABLE users ALTER COLUMN username DROP NOT NULL;
+
 -- Security question (fixes: password reset without email
 -- verification - the account owner proves identity by answering the
 -- question they chose at registration instead of just typing their
@@ -113,14 +120,22 @@ CREATE INDEX IF NOT EXISTS idx_advisor_messages_validation_id ON advisor_message
 
 
 def _get_connection():
+
     if not _PSYCOPG2_AVAILABLE:
         raise RuntimeError(
             "psycopg2 is not installed. Run: pip install psycopg2-binary"
         )
+
     if DATABASE_URL:
         return psycopg2.connect(DATABASE_URL)
+
     return psycopg2.connect(
-        host=PG_HOST, port=PG_PORT, dbname=PG_DB, user=PG_USER, password=PG_PASSWORD,
+        host=PG_HOST,
+        port=PG_PORT,
+        dbname=PG_DB,
+        user=PG_USER,
+        password=PG_PASSWORD,
+        sslmode="require",
     )
 
 
@@ -297,10 +312,17 @@ def create_user(email: str, password_hash: str, security_question: str = None, s
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO users (email, password_hash, security_question, security_answer_hash)
-                    VALUES (%s, %s, %s, %s) RETURNING id
+                    INSERT INTO users
+                        (email, username, password_hash, security_question, security_answer_hash)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id
                     """,
-                    (email.strip().lower(), password_hash, security_question, security_answer_hash),
+                    (
+                        email.strip().lower(),
+                        email.strip().lower(),
+                        password_hash,
+                        security_question,
+                        security_answer_hash,
+                    ),
                 )
                 new_id = cur.fetchone()[0]
             conn.commit()

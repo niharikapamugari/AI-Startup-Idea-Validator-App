@@ -7,6 +7,7 @@ queries) instead of one broad query, then combining results.
 """
 
 from ddgs import DDGS
+from concurrent.futures import ThreadPoolExecutor
 
 
 class SearchResult:
@@ -46,4 +47,11 @@ class DuckDuckGoTool:
         query, each with its own hits - not merged, so the LLM can see
         which results came from which angle of research.
         """
-        return [SearchResult(q, self.search(q, max_results_per_query)) for q in queries]
+        # Each query creates its own short-lived DDGS client in search(), so
+        # they are independent and can run concurrently. Preserve the input
+        # order so downstream context remains deterministic.
+        with ThreadPoolExecutor(max_workers=min(4, len(queries) or 1)) as executor:
+            hits_by_query = list(
+                executor.map(lambda query: self.search(query, max_results_per_query), queries)
+            )
+        return [SearchResult(query, hits) for query, hits in zip(queries, hits_by_query)]

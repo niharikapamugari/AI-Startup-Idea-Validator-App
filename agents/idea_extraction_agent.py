@@ -18,6 +18,31 @@ from app.config import GROQ_API_KEY, MODEL_NAME
 client = Groq(api_key=GROQ_API_KEY)
 
 
+_EXTRACTION_FIELDS = (
+    "idea_name", "problem", "solution", "target_customer", "industry", "business_model",
+)
+
+
+def _normalize_extraction_output(data: dict) -> dict:
+    """Keep the extraction contract text-only for downstream agents.
+
+    Models occasionally return a JSON list for a field such as
+    ``target_customer``. The UI and analysis agents operate on prose, so
+    normalize lists into a readable comma-separated string at the boundary.
+    """
+    normalized = dict(data) if isinstance(data, dict) else {}
+    for field in _EXTRACTION_FIELDS:
+        value = normalized.get(field, "")
+        if isinstance(value, (list, tuple)):
+            value = ", ".join(str(item).strip() for item in value if str(item).strip())
+        elif value is None:
+            value = ""
+        elif not isinstance(value, str):
+            value = str(value)
+        normalized[field] = value.strip()
+    return normalized
+
+
 def _validate_raw_input(raw_idea: str) -> dict:
     """Deterministic input validation - no LLM involved."""
     if not raw_idea or not raw_idea.strip():
@@ -70,7 +95,7 @@ Startup idea: "{raw_idea}"
                 temperature=0.0,  # minimize sampling variance
             )
             text = response.choices[0].message.content
-            data = _parse_llm_json(text)
+            data = _normalize_extraction_output(_parse_llm_json(text))
 
             # Step 2: Deterministic output validation, after the LLM call
             output_check = _validate_extraction_output(data)
