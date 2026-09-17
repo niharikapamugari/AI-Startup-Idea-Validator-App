@@ -30,7 +30,7 @@ jobs:
             const browser = await chromium.launch({ headless: true });
             const page = await browser.newPage();
 
-            const url = "https://ai-startup-idea-validator-app-9jazuzghangffqzqdulujw.streamlit.app/";
+            const url = "https://startup-idea-validator-ai.streamlit.app/";
 
             console.log(`Opening ${url}`);
 
