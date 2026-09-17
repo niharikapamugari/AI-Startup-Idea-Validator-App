@@ -1,0 +1,62 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  keep-awake:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install --with-deps chromium
+
+      - name: Visit Streamlit app
+        run: |
+          node <<'EOF'
+          const { chromium } = require("playwright");
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage();
+
+            const url = "https://ai-startup-idea-validator-app-9jazuzghangffqzqdulujw.streamlit.app/";
+
+            console.log(`Opening ${url}`);
+
+            await page.goto(url, {
+              waitUntil: "domcontentloaded",
+              timeout: 120000
+            });
+
+            await page.waitForTimeout(10000);
+
+            const bodyText = await page.locator("body").innerText();
+            console.log(bodyText.slice(0, 2000));
+
+            // If Streamlit shows a wake-up button, click it.
+            const wakeButton = page.getByText("Yes, get this app back up!", {
+              exact: false
+            });
+
+            if (await wakeButton.count() > 0) {
+              console.log("Sleeping app detected. Waking it up...");
+              await wakeButton.first().click();
+              await page.waitForTimeout(20000);
+            }
+
+            console.log("Keep-alive visit completed.");
+
+            await browser.close();
+          })();
+          EOF
